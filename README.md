@@ -54,6 +54,15 @@ Issues, ideas, and PRs are welcome.
 - 🧠 **Agents & system** — see profiles, workers, and live status.
 - 📲 **Install to home screen** on iOS Safari and Android Chrome.
 
+## Companion X/Twitter Briefs
+
+For mobile social monitoring workflows, pair Hermes Mobile with
+[Hermes Tweet](https://github.com/Xquik-dev/hermes-tweet). Hermes Tweet can
+collect X/Twitter account, post, or trend context inside Hermes, while this PWA
+lets you review social briefs, approve follow-up actions, and watch activity
+from your phone. Hermes Tweet is a third-party project maintained by Xquik-dev,
+not by this repository.
+
 ## 📸 Screenshots
 
 <table>
