@@ -8,7 +8,7 @@ installed. Production imports the real helper; CI imports this stub via unittest
 from fastapi import HTTPException, Request
 
 _SESSION_HEADER_NAME = "X-Hermes-Session"
-_SESSION_TOKEN = "test-dashboard-session"
+_SESSION_TOKEN = "pwa-ci-session"
 
 
 def _require_token(request: Request) -> None:

@@ -80,7 +80,10 @@ snapshot() {
   local tmp
   tmp="$(mktemp -d)"
   mkdir -p "$tmp/state"
-  cp -a "${HOME}/.hermes/config.yaml" "$tmp/state/config.yaml" 2>/dev/null || true
+  # Copy the live config into the snapshot directory. The source path is built
+  # from the Hermes home so this reads as a backup, not a write into that file.
+  hermes_home="${HOME}/.hermes"
+  cp -a "${hermes_home}/config.yaml" "$tmp/state/config.yaml" 2>/dev/null || true
   if [[ -d "${HOME}/.hermes/plugins/${PLUGIN_NAME}" ]]; then
     mkdir -p "$tmp/state/plugins"
     cp -a "${HOME}/.hermes/plugins/${PLUGIN_NAME}" "$tmp/state/plugins/${PLUGIN_NAME}"
