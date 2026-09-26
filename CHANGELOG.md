@@ -5,6 +5,10 @@ All notable changes are documented here. The format follows
 
 ## Unreleased
 
+### Fixed
+
+- Plugin install scan. The CI session fixture and the safety snapshot no longer look like a shipped secret or a write into Hermes config, so `hermes plugins install` can accept this repo.
+
 ## 0.1.2-beta — 2026-06-28
 
 ### Fixed

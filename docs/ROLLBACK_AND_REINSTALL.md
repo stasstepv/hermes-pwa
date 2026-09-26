@@ -93,7 +93,7 @@ If disable/remove/restart does not restore Hermes:
    mkdir -p ~/.hermes/plugins-disabled
    mv ~/.hermes/plugins/hermes-pwa ~/.hermes/plugins-disabled/hermes-pwa.$(date -u +%Y%m%dT%H%M%SZ) 2>/dev/null || true
    ```
-3. Edit `~/.hermes/config.yaml` and remove `hermes-pwa` from `plugins.enabled`; add it to `plugins.disabled` if needed.
+3. In `~/.hermes/config.yaml`, remove `hermes-pwa` from `plugins.enabled` and add it to `plugins.disabled` if needed.
 4. Start gateway:
    ```bash
    hermes gateway start
