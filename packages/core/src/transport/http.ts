@@ -10,6 +10,39 @@ export class HermesHttpError extends Error {
   }
 }
 
+/** Verdicts from a fenced session mutation (or the forwarding transport) that are
+ *  transient: the write definitely did not commit on our terms, so ONE retry with a
+ *  re-read fence + fresh idempotency key is safe and usually lands. Anything not
+ *  listed (400 invalid_params, 401/403, not_found) is final — retrying would just
+ *  re-answer the same thing. */
+const RETRYABLE_DETAIL = /revision_conflict|stale_generation|owner_unreachable|owner_unavailable|session_busy|runtime_draining|storage_unavailable/i;
+const NETWORK_ERROR = /failed to fetch|fetch failed|network|timed out|timeout|abort|offline|disconnected/i;
+
+export function isRetryableMutationError(err: unknown): boolean {
+  if (err instanceof HermesHttpError) return RETRYABLE_DETAIL.test(err.body || '');
+  return err instanceof Error && NETWORK_ERROR.test(err.message || '');
+}
+
+/** Translate a transport failure into human-facing copy. Never show a raw
+ *  {"detail":"..."} body or an AbortError stack to a phone user. */
+export function friendlyHttpError(err: unknown, fallback: string): string {
+  if (err instanceof HermesHttpError) {
+    const detail = err.body || '';
+    if (err.status === 401 || err.status === 403) return 'Your dashboard session expired. Sign in again.';
+    if (err.status === 429) return 'Hermes is busy or rate-limited. Try again in a moment.';
+    if (/revision_conflict|stale_generation/i.test(detail)) return 'This conversation changed elsewhere. Reload the list and try again.';
+    if (/session_busy|runtime_draining/i.test(detail)) return 'The conversation is busy. Try again in a moment.';
+    if (/owner_unreachable|owner_unavailable/i.test(detail)) return 'Hermes is unreachable. Check the connection and try again.';
+    if (/storage_unavailable/i.test(detail)) return 'Hermes storage is unavailable. Try again shortly.';
+    if (/not_found/i.test(detail)) return 'That session no longer exists. Reload the list.';
+    if (err.status >= 500) return 'Hermes server returned an error. Check the server logs, then try again.';
+    return fallback;
+  }
+  const message = err instanceof Error ? err.message : String(err ?? '');
+  if (NETWORK_ERROR.test(message)) return 'Hermes is unreachable. Check the connection and try again.';
+  return message.trim() ? message : fallback;
+}
+
 export interface HermesRequestInit extends RequestInit {
   /** Skip automatically appending the active PWA profile query parameter. */
   skipProfile?: boolean;

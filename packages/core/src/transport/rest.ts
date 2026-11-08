@@ -1,4 +1,5 @@
 import type { Http } from './http';
+import { isRetryableMutationError } from './http';
 import { PWA_NON_LOCAL_SESSION_SOURCES, mergeSessionsByLineage, sessionsFromResult, type Session } from '../domain/session';
 import type { GatewayStatus } from '../domain/status';
 import type { AuthProvider, HermesUser, LoginBody, LoginResult, WsTicket } from '../domain/auth';
@@ -39,6 +40,19 @@ import type { ActionItem } from '../domain/activity';
 import { toActionItem } from '../domain/activity';
 
 const AUDIO_HTTP_TIMEOUT_MS = 2 * 60_000;
+
+/** Unique idempotency key for a fenced session mutation (backend ``request_id``).
+ *  ``crypto.randomUUID`` is secure-context only; fall back to a random hex uuid so
+ *  the PWA also works over plain http (LAN / tailscale IP). */
+function newRequestId(): string {
+  const c = (globalThis as { crypto?: Crypto }).crypto;
+  if (c && typeof c.randomUUID === 'function') return c.randomUUID();
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (ch) => {
+    const r = (Math.random() * 16) | 0;
+    const v = ch === 'x' ? r : (r & 0x3) | 0x8;
+    return v.toString(16);
+  });
+}
 
 interface RawStatus {
   auth_required?: boolean;
@@ -650,17 +664,61 @@ export function makeRestClient(http: Http): RestClient {
     },
 
     async sessionUpdate(sessionId, updates): Promise<unknown> {
-      return await http<unknown>(`/api/sessions/${encodeURIComponent(sessionId)}`, {
-        method: 'PATCH',
-        body: JSON.stringify(updates),
-      });
+      // The backend fences every session mutation: a PATCH without a fresh
+      // request_id + expected_revision answers 409 client_upgrade_required
+      // ("app is out of sync"). Read the authoritative revision from the
+      // mutation-snapshot endpoint at mutation time, then send it with a
+      // unique idempotency key (same profile scope as the write itself).
+      // One automatic retry covers the snapshot→write race (list reloaded
+      // elsewhere, mobile transport hiccup): the retry re-reads the fence
+      // and uses a fresh key, so it is a legitimate first-attempt elsewhere.
+      let lastErr: unknown;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const profQs = updates.profile ? `?profile=${encodeURIComponent(updates.profile)}` : '';
+          const snap = await http<{ runtime_revision?: number }>(
+            `/api/sessions/${encodeURIComponent(sessionId)}/mutation-snapshot${profQs}`,
+          );
+          return await http<unknown>(`/api/sessions/${encodeURIComponent(sessionId)}`, {
+            method: 'PATCH',
+            body: JSON.stringify({
+              ...updates,
+              request_id: newRequestId(),
+              expected_revision: snap.runtime_revision ?? 0,
+            }),
+          });
+        } catch (err) {
+          lastErr = err;
+          if (!isRetryableMutationError(err)) break;
+        }
+      }
+      throw lastErr;
     },
 
     async sessionDelete(sessionId, profile): Promise<unknown> {
-      const qs = profile ? `?profile=${encodeURIComponent(profile)}` : '';
-      return await http<unknown>(`/api/sessions/${encodeURIComponent(sessionId)}${qs}`, {
-        method: 'DELETE',
-      });
+      // Fenced like sessionUpdate, plus the generation fence: the store requires
+      // expected_generation for 'delete' (hermes_state_runtime.mutate_runtime_session),
+      // and the mutation-snapshot endpoint is the authoritative source for both.
+      // Same one-retry discipline as sessionUpdate.
+      let lastErr: unknown;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        try {
+          const qs = profile ? `?profile=${encodeURIComponent(profile)}` : '';
+          const snap = await http<{ runtime_revision?: number; runtime_generation?: number | null }>(
+            `/api/sessions/${encodeURIComponent(sessionId)}/mutation-snapshot${qs}`,
+          );
+          const delQs =
+            `?request_id=${encodeURIComponent(newRequestId())}&expected_revision=${snap.runtime_revision ?? 0}` +
+            `&expected_generation=${snap.runtime_generation ?? 0}${profile ? `&profile=${encodeURIComponent(profile)}` : ''}`;
+          return await http<unknown>(`/api/sessions/${encodeURIComponent(sessionId)}${delQs}`, {
+            method: 'DELETE',
+          });
+        } catch (err) {
+          lastErr = err;
+          if (!isRetryableMutationError(err)) break;
+        }
+      }
+      throw lastErr;
     },
 
     async sessionBulkDelete(ids): Promise<unknown> {

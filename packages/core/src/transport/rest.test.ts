@@ -160,19 +160,63 @@ describe('makeRestClient', () => {
     );
   });
 
-  it('archives sessions through the backend patch endpoint with target profile', async () => {
-    httpMock.mockResolvedValue({ ok: true });
+  it('archives sessions through the backend patch endpoint with fence identity', async () => {
+    httpMock
+      .mockResolvedValueOnce({ exists: true, runtime_revision: 7 }) // mutation-snapshot
+      .mockResolvedValueOnce({ ok: true }); // PATCH
     await client.sessionUpdate('sess-1', { archived: true, profile: 'dev' });
-    expect(httpMock).toHaveBeenCalledWith('/api/sessions/sess-1', {
-      method: 'PATCH',
-      body: JSON.stringify({ archived: true, profile: 'dev' }),
-    });
+    expect(httpMock).toHaveBeenNthCalledWith(1, '/api/sessions/sess-1/mutation-snapshot?profile=dev');
+    const [, patchInit] = httpMock.mock.calls[1] ?? [];
+    expect(patchInit?.method).toBe('PATCH');
+    const body = JSON.parse(String(patchInit?.body));
+    expect(body.archived).toBe(true);
+    expect(body.profile).toBe('dev');
+    expect(body.request_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    expect(body.expected_revision).toBe(7);
   });
 
-  it('deletes a session with an optional profile query', async () => {
-    httpMock.mockResolvedValue({ ok: true });
+  it('deletes a session fenced with revision+generation, carrying the profile query', async () => {
+    httpMock
+      .mockResolvedValueOnce({ exists: true, runtime_revision: 3, runtime_generation: 1 }) // mutation-snapshot
+      .mockResolvedValueOnce({ ok: true, deleted_ids: ['sess-1'] }); // DELETE
     await client.sessionDelete('sess-1', 'dev');
-    expect(httpMock).toHaveBeenCalledWith('/api/sessions/sess-1?profile=dev', { method: 'DELETE' });
+    expect(httpMock).toHaveBeenNthCalledWith(1, '/api/sessions/sess-1/mutation-snapshot?profile=dev');
+    expect(httpMock).toHaveBeenNthCalledWith(
+      2,
+      expect.stringMatching(/^\/api\/sessions\/sess-1\?request_id=.+&expected_revision=3&expected_generation=1&profile=dev$/),
+      { method: 'DELETE' },
+    );
+  });
+
+  it('retries a fenced update once with a freshly-read fence on revision conflict', async () => {
+    httpMock
+      .mockResolvedValueOnce({ exists: true, runtime_revision: 7 }) // mutation-snapshot
+      .mockRejectedValueOnce(new HermesHttpError(409, 'Conflict', '{"detail":"revision_conflict"}')) // PATCH attempt 1
+      .mockResolvedValueOnce({ exists: true, runtime_revision: 8 }) // re-read snapshot
+      .mockResolvedValueOnce({ ok: true }); // PATCH attempt 2 lands
+    await expect(client.sessionUpdate('sess-1', { archived: true })).resolves.toEqual({ ok: true });
+    expect(httpMock).toHaveBeenCalledTimes(4);
+    const firstBody = JSON.parse(String(httpMock.mock.calls[1]?.[1]?.body));
+    const retryBody = JSON.parse(String(httpMock.mock.calls[3]?.[1]?.body));
+    expect(retryBody.expected_revision).toBe(8);
+    expect(retryBody.request_id).not.toBe(firstBody.request_id);
+  });
+
+  it('retries a delete once on an owner transport hiccup, never on a final verdict', async () => {
+    httpMock
+      .mockResolvedValueOnce({ exists: true, runtime_revision: 2, runtime_generation: 1 })
+      .mockRejectedValueOnce(new HermesHttpError(503, 'Service Unavailable', '{"detail":"owner_unreachable"}'))
+      .mockResolvedValueOnce({ exists: true, runtime_revision: 2, runtime_generation: 1 })
+      .mockResolvedValueOnce({ ok: true, deleted_ids: ['sess-1'] });
+    await expect(client.sessionDelete('sess-1')).resolves.toEqual({ ok: true, deleted_ids: ['sess-1'] });
+    expect(httpMock).toHaveBeenCalledTimes(4);
+
+    httpMock.mockReset();
+    httpMock
+      .mockResolvedValueOnce({ exists: true, runtime_revision: 2, runtime_generation: 1 })
+      .mockRejectedValueOnce(new HermesHttpError(400, 'Bad Request', '{"detail":"invalid_params"}'));
+    await expect(client.sessionDelete('sess-2')).rejects.toThrow('invalid_params');
+    expect(httpMock).toHaveBeenCalledTimes(2);
   });
 
   it('deletes profiles through the backend endpoint', async () => {

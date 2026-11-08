@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { HermesHttpError, makeHttp } from './http';
+import { HermesHttpError, friendlyHttpError, isRetryableMutationError, makeHttp } from './http';
 
 describe('HermesHttpError', () => {
   it('constructs with status, statusText, and body', () => {
@@ -175,5 +175,49 @@ describe('makeHttp', () => {
     await vi.advanceTimersByTimeAsync(15);
 
     await rejection;
+  });
+});
+
+describe('isRetryableMutationError', () => {
+  it('flags transient fence verdicts and transport hiccups', () => {
+    expect(isRetryableMutationError(new HermesHttpError(409, 'Conflict', '{"detail":"revision_conflict"}'))).toBe(true);
+    expect(isRetryableMutationError(new HermesHttpError(503, 'Service Unavailable', 'owner_unavailable: default: gateway not running'))).toBe(true);
+    expect(isRetryableMutationError(new Error('TypeError: Failed to fetch'))).toBe(true);
+    expect(isRetryableMutationError(new Error('HTTP request timed out'))).toBe(true);
+  });
+
+  it('treats final verdicts as final', () => {
+    expect(isRetryableMutationError(new HermesHttpError(400, 'Bad Request', '{"detail":"invalid_params"}'))).toBe(false);
+    expect(isRetryableMutationError(new HermesHttpError(401, 'Unauthorized', '{"detail":"authentication_required"}'))).toBe(false);
+    expect(isRetryableMutationError(new HermesHttpError(404, 'Not Found', '{"detail":"not_found"}'))).toBe(false);
+    expect(isRetryableMutationError('not even an error')).toBe(false);
+  });
+});
+
+describe('friendlyHttpError', () => {
+  it('maps backend details to human copy, never raw JSON', () => {
+    expect(friendlyHttpError(new HermesHttpError(409, 'Conflict', '{"detail":"revision_conflict"}'), 'fb')).toBe(
+      'This conversation changed elsewhere. Reload the list and try again.',
+    );
+    expect(friendlyHttpError(new HermesHttpError(503, 'Service Unavailable', 'owner_unavailable: default: gateway down'), 'fb')).toBe(
+      'Hermes is unreachable. Check the connection and try again.',
+    );
+    expect(friendlyHttpError(new HermesHttpError(403, 'Forbidden', ''), 'fb')).toBe('Your dashboard session expired. Sign in again.');
+    expect(friendlyHttpError(new HermesHttpError(429, 'Too Many Requests', ''), 'fb')).toBe(
+      'Hermes is busy or rate-limited. Try again in a moment.',
+    );
+    expect(friendlyHttpError(new HermesHttpError(500, 'Server Error', 'boom'), 'fb')).toBe(
+      'Hermes server returned an error. Check the server logs, then try again.',
+    );
+    expect(friendlyHttpError(new HermesHttpError(404, 'Not Found', '{"detail":"not_found"}'), 'fb')).toBe(
+      'That session no longer exists. Reload the list.',
+    );
+  });
+
+  it('covers non-HermesHttpError failures', () => {
+    expect(friendlyHttpError(new TypeError('Failed to fetch'), 'fb')).toBe('Hermes is unreachable. Check the connection and try again.');
+    expect(friendlyHttpError(new Error('   '), 'fb')).toBe('fb');
+    expect(friendlyHttpError(undefined, 'fb')).toBe('fb');
+    expect(friendlyHttpError('weird string', 'fb')).toBe('weird string');
   });
 });
