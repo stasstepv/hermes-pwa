@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import { mergeSessionsByLineage, sessionPinId, type Session } from '../domain/session';
+import { friendlyHttpError } from '../transport/http';
 import type { RpcClient } from '../transport/jsonrpc';
 import type { RestClient } from '../transport/rest';
 import { LONG_RPC_TIMEOUT_MS } from '../transport/timeouts';
@@ -63,7 +64,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
       const sessions = await rest.profileSessions();
       set({ sessions: mergeSessionsByLineage([], sessions ?? []), loading: false });
     } catch (err) {
-      set({ loading: false, error: err instanceof Error ? err.message : 'Failed to load sessions.' });
+      set({ loading: false, error: friendlyHttpError(err, 'Failed to load sessions.') });
     }
   },
 
@@ -100,7 +101,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
       const sessions = get().sessions.map((item) => (item.id === session.id ? { ...item, archived } : item));
       set({ sessions });
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : 'Failed to update session.' });
+      set({ error: friendlyHttpError(err, 'Failed to update session.') });
       throw err;
     }
   },
@@ -114,7 +115,7 @@ export const useSessionsStore = create<SessionsStore>((set, get) => ({
       set({ sessions, pinnedIds });
       writePinnedIds(pinnedIds);
     } catch (err) {
-      set({ error: err instanceof Error ? err.message : 'Failed to delete session.' });
+      set({ error: friendlyHttpError(err, 'Failed to delete session.') });
       throw err;
     }
   },
