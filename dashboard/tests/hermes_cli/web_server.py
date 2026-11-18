@@ -5,10 +5,12 @@ installed. Production imports the real helper; CI imports this stub via unittest
 -discovery's test path and still exercises the authenticated route dependency.
 """
 
+from secrets import token_urlsafe
+
 from fastapi import HTTPException, Request
 
 _SESSION_HEADER_NAME = "X-Hermes-Session"
-_SESSION_TOKEN = "test-dashboard-session"
+_SESSION_TOKEN = token_urlsafe(24)
 
 
 def _require_token(request: Request) -> None:
