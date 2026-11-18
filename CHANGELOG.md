@@ -5,6 +5,14 @@ All notable changes are documented here. The format follows
 
 ## Unreleased
 
+### Fixed
+
+- **Git installation passes the Hermes plugin install scanner.** The Python test stub's fixed
+  session token and the safety script's copy of `~/.hermes/config.yaml` were critical scanner
+  findings, so `hermes plugins install` blocked the plugin with a `dangerous` verdict. The stub now
+  generates an ephemeral token, and the optional plugin-state snapshot no longer includes Hermes
+  configuration; `hermes backup` remains the configuration recovery path (#24).
+
 ## 0.1.2-beta — 2026-06-28
 
 ### Fixed

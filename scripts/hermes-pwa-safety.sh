@@ -80,7 +80,6 @@ snapshot() {
   local tmp
   tmp="$(mktemp -d)"
   mkdir -p "$tmp/state"
-  cp -a "${HOME}/.hermes/config.yaml" "$tmp/state/config.yaml" 2>/dev/null || true
   if [[ -d "${HOME}/.hermes/plugins/${PLUGIN_NAME}" ]]; then
     mkdir -p "$tmp/state/plugins"
     cp -a "${HOME}/.hermes/plugins/${PLUGIN_NAME}" "$tmp/state/plugins/${PLUGIN_NAME}"

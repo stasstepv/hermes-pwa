@@ -17,7 +17,6 @@ Before testing on the default profile, create both:
 
 1. A **full Hermes backup** with `hermes backup`.
 2. A **small plugin-state snapshot** of:
-   - `~/.hermes/config.yaml`
    - `~/.hermes/plugins/hermes-pwa/` if present
    - gateway service status
 
