@@ -31,7 +31,7 @@ export default defineConfig({
         'packages/web/src/main.tsx',
       ],
     },
-    include: ['packages/**/*.{test,spec}.{ts,tsx}'],
+    include: ['packages/**/*.{test,spec}.{ts,tsx}', 'scripts/**/*.test.mjs'],
     exclude: ['**/node_modules/**', '**/dist/**'],
   },
   resolve: {

@@ -79,6 +79,10 @@ The safety wrapper does this conversion automatically:
 scripts/hermes-pwa-safety.sh reinstall . --yes
 ```
 
+### npm installer refresh behavior
+
+The npm installer builds a fresh staged plugin directory, preserves only regular `push_subscriptions.json`, `pending_approvals.json`, and `push_delivery_state.json` files, and then swaps the staged directory into place. An existing development symlink is replaced as a link; its target is never modified. The swap is rollback-capable, not atomic across an interruption. If restoration cannot complete, the installer reports the recoverable previous-install path; move that directory back to `hermes-pwa` before restarting the gateway. A successful swap remains successful if cleanup of its old backup fails; the installer warns and prints that backup path instead.
+
 ## Emergency rollback
 
 If disable/remove/restart does not restore Hermes:

@@ -19,14 +19,15 @@
  *   - Works on Windows, macOS and Linux paths.
  */
 
-import { cp, lstat, mkdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
+import { copyFile, cp, lstat, mkdir, mkdtemp, readFile, realpath, rename, rm, symlink, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const COPY_PAYLOAD = ['dashboard', 'plugin.yaml', '__init__.py', 'push_common.py', 'LICENSE', 'NOTICE', 'README.md', 'package.json'];
+const STATE_FILES = ['push_subscriptions.json', 'pending_approvals.json', 'push_delivery_state.json'];
 
 async function copyWhitelistedPayload(src, dest) {
   await mkdir(dest, { recursive: true });
@@ -66,7 +67,7 @@ Usage:
 Options:
   --dry-run    Show what would happen without changing the filesystem.
   --symlink    Create a symlink instead of copying files (useful for development).
-  --force      Explicitly replace any previous install (default behavior; kept for update docs).
+  --force      Accepted for compatibility; refreshes managed files while preserving plugin state.
   -h, --help   Show this message.
 `);
 }
@@ -88,6 +89,88 @@ async function writeInstallMarker(dest, src) {
   await writeFile(join(dest, '.hermes-pwa-install.json'), `${JSON.stringify(marker, null, 2)}\n`, 'utf8');
 }
 
+function isPathInside(parent, candidate) {
+  const path = relative(parent, candidate);
+  return path !== '' && !path.startsWith('..') && !isAbsolute(path);
+}
+
+async function copyRegularState(existing, staged) {
+  try {
+    if (!(await lstat(existing)).isDirectory()) return;
+  } catch (err) {
+    if (err.code === 'ENOENT') return;
+    throw err;
+  }
+
+  for (const name of STATE_FILES) {
+    const sourcePath = join(existing, name);
+    try {
+      if ((await lstat(sourcePath)).isFile()) {
+        await copyFile(sourcePath, join(staged, name));
+      }
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+    }
+  }
+}
+
+async function installStaged(dest, pluginsDir, populate) {
+  const staged = await mkdtemp(join(pluginsDir, '.hermes-pwa-stage-'));
+  const backup = `${staged}-previous`;
+  let previousMoved = false;
+  let installed = false;
+
+  try {
+    await populate(staged);
+
+    try {
+      await rename(dest, backup);
+      previousMoved = true;
+    } catch (err) {
+      if (err.code !== 'ENOENT') throw err;
+    }
+
+    try {
+      await rename(staged, dest);
+      installed = true;
+    } catch (err) {
+      if (previousMoved) {
+        try {
+          await rename(backup, dest);
+        } catch (restoreErr) {
+          throw new Error(`${err.message}; previous install is recoverable at ${backup}: ${restoreErr.message}`);
+        }
+      }
+      throw err;
+    }
+
+    if (previousMoved) {
+      try {
+        await rm(backup, { recursive: true, force: true });
+      } catch (err) {
+        console.warn(`Warning: installed, but previous version remains at ${backup}: ${err.message}`);
+      }
+    }
+  } finally {
+    if (!installed) await rm(staged, { recursive: true, force: true });
+  }
+}
+
+async function installCopy(src, dest, pluginsDir) {
+  await installStaged(dest, pluginsDir, async (staged) => {
+    await copyWhitelistedPayload(src, staged);
+    await copyRegularState(dest, staged);
+    await writeInstallMarker(staged, src);
+  });
+}
+
+async function installSymlink(src, dest, pluginsDir) {
+  await installStaged(dest, pluginsDir, async (staged) => {
+    await rm(staged, { recursive: true, force: true });
+    await symlink(src, staged, process.platform === 'win32' ? 'junction' : 'dir');
+  });
+}
+
 async function install() {
   const args = parseArgs();
   if (args.help) {
@@ -102,12 +185,6 @@ async function install() {
   const pluginsDir = join(hermesHome, 'plugins');
   const dest = join(pluginsDir, 'hermes-pwa');
   const src = resolve(join(__dirname, '..'));
-
-  // Sanity checks
-  if (src === dest) {
-    console.error('Error: source and destination are the same path.');
-    process.exit(1);
-  }
 
   console.log(`HERMES_HOME: ${hermesHome}`);
   console.log(`Source:      ${src}`);
@@ -124,7 +201,6 @@ async function install() {
     process.exit(0);
   }
 
-  // Ensure plugins directory exists
   try {
     await mkdir(pluginsDir, { recursive: true });
   } catch (err) {
@@ -132,33 +208,25 @@ async function install() {
     process.exit(1);
   }
 
-  // Remove previous install if it exists
   try {
-    const st = await lstat(dest);
-    if (st.isSymbolicLink()) {
-      await rm(dest);
-    } else if (st.isDirectory()) {
-      await rm(dest, { recursive: true, force: true });
-    } else {
-      await rm(dest, { force: true });
+    const canonicalSrc = await realpath(src);
+    // Resolve the plugins directory, not the destination entry: an existing
+    // development symlink is renamed and replaced as a link, so its target
+    // (usually this checkout) is never written through.
+    const canonicalDest = join(await realpath(pluginsDir), 'hermes-pwa');
+    if (canonicalSrc === canonicalDest || isPathInside(canonicalSrc, canonicalDest)) {
+      throw new Error('source and destination resolve to the same location or destination is inside the source');
     }
   } catch (err) {
-    if (err.code !== 'ENOENT') {
-      console.error(`Error: unable to remove previous install at ${dest}: ${err.message}`);
-      process.exit(1);
-    }
+    console.error(`Error: unsafe installation path: ${err.message}`);
+    process.exit(1);
   }
 
-  // Install
   try {
     if (args.symlink) {
-      await symlink(src, dest, process.platform === 'win32' ? 'junction' : 'dir');
+      await installSymlink(src, dest, pluginsDir);
     } else {
-      // Copy only the distributable plugin payload. Do not copy the whole source
-      // checkout: it may contain .git, private docs, local screenshots, logs, or
-      // other disposable agent artifacts.
-      await copyWhitelistedPayload(src, dest);
-      await writeInstallMarker(dest, src);
+      await installCopy(src, dest, pluginsDir);
     }
   } catch (err) {
     console.error(`Error: install failed: ${err.message}`);
