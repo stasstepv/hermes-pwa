@@ -51,7 +51,7 @@ class PluginPushApiTests(unittest.TestCase):
 
     def test_public_app_routes_remain_open(self):
         with tempfile.TemporaryDirectory() as dist:
-            root = Path(dist)
+            root = Path(dist).resolve()
             (root / "index.html").write_text("<!doctype html><title>Hermes Mobile</title>", encoding="utf-8")
             with patch("dashboard.plugin_api._DIST_ROOT", root):
                 app = FastAPI()
