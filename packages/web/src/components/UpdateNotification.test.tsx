@@ -38,6 +38,18 @@ describe('UpdateNotification', () => {
     expect(screen.getAllByText('npx -y hermes-pwa@latest install --force')[0]).toBeInTheDocument();
   });
 
+  it('shows the installed version in the banner body', () => {
+    render(
+      <UpdateNotification update={{ ...update, current: '0.1.1-beta', latest: '0.1.2-beta' }} onDismiss={vi.fn()} />,
+    );
+
+    expect(screen.getByText('Hermes PWA 0.1.1-beta → 0.1.2-beta')).toBeInTheDocument();
+    expect(
+      screen.getByText(/Version 0\.1\.1-beta shows instructions only; it does not modify plugin files\./),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Version 0\.1\.0 /)).not.toBeInTheDocument();
+  });
+
   it('calls dismiss handler', () => {
     const onDismiss = vi.fn();
     render(<UpdateNotification update={update} onDismiss={onDismiss} />);
