@@ -33,7 +33,7 @@ export function UpdateNotification({ update, onDismiss }: UpdateNotificationProp
       </div>
 
       <p className="hm-update__body">
-        A newer Hermes PWA release is available. Version 0.1.0 shows instructions only; it does not modify plugin files.
+        A newer Hermes PWA release is available. Version {update.current} shows instructions only; it does not modify plugin files.
       </p>
 
       <div className="hm-update__instructions">
